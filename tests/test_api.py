@@ -56,3 +56,31 @@ def test_formula_helpers():
     assert compute_elegance(2, 0.5) == 4
     assert compute_action(2, 1, 3, 2) == 7
     assert compute_distance(0) == math.inf
+
+
+def test_router_categories():
+    from phi_router import classify_question
+
+    assert classify_question("Jak funguje kvantová částice?") == "physics"
+    assert classify_question("Jak funguje DNA a protein?") == "biology"
+    assert classify_question("Co je smysl existence?") == "philosophy"
+    assert classify_question("Dobrý den, napiš pozdrav.") == "general"
+
+
+def test_json_memory_profile_and_clear(tmp_path):
+    import asyncio
+    from phi_memory import JsonMemory
+
+    async def scenario():
+        memory = JsonMemory(tmp_path)
+        await memory.update_profile("u1", {"language": "cs"})
+        await memory.add_conversation("u1", "otázka", "odpověď", "general")
+        assert (await memory.get_profile("u1"))["language"] == "cs"
+        items = await memory.get_recent_conversations("u1")
+        assert len(items) == 1
+        assert items[0]["question"] == "otázka"
+        await memory.clear("u1")
+        assert await memory.get_profile("u1") == {}
+        assert await memory.get_recent_conversations("u1") == []
+
+    asyncio.run(scenario())
