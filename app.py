@@ -6,7 +6,7 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
-from phi_formulas import FORMULA_CATEGORIES, compute_action, compute_distance, compute_elegance, compute_F_info, compute_mass, compute_phi, get_formula_catalog
+from phi_formulas import FORMULA_CATEGORIES, PLANCK_VOLUME, compute_action, compute_distance, compute_elegance, compute_F_info, compute_mass, compute_phi, get_formula_catalog
 from phi_memory import JsonMemory
 from phi_metrics import record_request, snapshot
 from phi_prompt import build_system_prompt
@@ -116,7 +116,7 @@ def formula_category(category: str) -> dict[str, Any]:
 def compute(payload: ComputeRequest) -> dict[str, Any]:
     p = payload.parameters
     functions = {
-        "phi": lambda: compute_phi(p["I_ij"], p.get("V_P", 1.616255e-35**3)),
+        "phi": lambda: compute_phi(p["I_ij"], p.get("V_P", PLANCK_VOLUME)),
         "distance": lambda: compute_distance(p["I_ij"]),
         "elegance": lambda: compute_elegance(p["C"], p["K"]),
         "mass": lambda: compute_mass(p["dC_dt"]),
