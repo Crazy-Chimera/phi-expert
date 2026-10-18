@@ -4,7 +4,9 @@ import os
 from pathlib import Path
 from typing import Any
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from phi_formulas import FORMULA_CATEGORIES, PLANCK_VOLUME, compute_action, compute_distance, compute_elegance, compute_F_info, compute_mass, compute_phi, get_formula_catalog
 from phi_memory import JsonMemory
@@ -17,12 +19,13 @@ APP_NAME = "Φ-Expert"
 DATA_DIR = Path(os.getenv("PHI_DATA_DIR", "/tmp/phi-expert-data"))
 memory = JsonMemory(DATA_DIR)
 app = FastAPI(title=APP_NAME, version="1.1.0", description="Modulární API pro Φ-Expert.")
+bearer_scheme = HTTPBearer(auto_error=False, scheme_name="HTTPBearer")
 
-def authorize(authorization: str | None = Header(default=None)) -> None:
+def authorize(credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)) -> None:
     token = os.getenv("PHI_API_TOKEN", "").strip()
     if not token:
         raise HTTPException(status_code=503, detail="API není zabezpečené. Nastavte PHI_API_TOKEN v prostředí.")
-    if authorization != f"Bearer {token}":
+    if credentials is None or credentials.scheme.lower() != "bearer" or credentials.credentials != token:
         raise HTTPException(status_code=401, detail="Neplatný nebo chybějící API token.")
 
 class AskRequest(BaseModel):
@@ -49,6 +52,88 @@ def root_head():
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": APP_NAME, "version": app.version}
+
+
+@app.get("/auth", response_class=HTMLResponse, include_in_schema=False)
+def auth_ui() -> str:
+    """Dedicated browser UI for validating a bearer token and authorizing Swagger."""
+    return """<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Φ-Expert · API autorizace</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+  <style>
+    :root { color-scheme: dark; --bg:#0b1020; --panel:#141c30; --line:#2a3854; --text:#edf3ff; --muted:#9baac5; --accent:#8ab4ff; }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,-apple-system,sans-serif; }
+    .shell { max-width:1080px; margin:36px auto; padding:0 18px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:24px; box-shadow:0 18px 55px #0003; }
+    h1 { margin:0 0 6px; font-size:clamp(24px,4vw,34px); } p { color:var(--muted); margin:8px 0 18px; }
+    label { display:block; margin:14px 0 7px; font-weight:650; }
+    input { width:100%; padding:13px 14px; color:var(--text); background:#080d19; border:1px solid var(--line); border-radius:9px; font:inherit; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+    button,.link { border:0; border-radius:9px; padding:11px 16px; font:inherit; font-weight:700; cursor:pointer; text-decoration:none; }
+    button { color:#081225; background:var(--accent); } .secondary { background:#263550; color:var(--text); }
+    #status { min-height:26px; margin:14px 0 0; font-weight:650; } .hint { font-size:13px; }
+    #swagger { margin-top:24px; background:#fff; border-radius:12px; overflow:hidden; }
+    .swagger-ui .topbar { display:none; }
+  </style>
+</head>
+<body><main class="shell">
+  <section class="card">
+    <h1>Φ-Expert · API autorizace</h1>
+    <p>Vlož svůj <code>PHI_API_TOKEN</code> z Renderu. Token se ověří proti chráněnému endpointu a použije pouze v této stránce pro Swagger; neukládá se do localStorage.</p>
+    <label for="token">Bearer token</label>
+    <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="Vlož PHI_API_TOKEN">
+    <div class="actions">
+      <button id="apply">Ověřit token a autorizovat Swagger</button>
+      <button class="secondary" id="clear" type="button">Vymazat token</button>
+      <a class="link secondary" href="/docs">Otevřít běžný Swagger</a>
+    </div>
+    <div id="status" role="status" aria-live="polite"></div>
+    <p class="hint">Nikdy sem nevkládej PHI_API_KEY (klíč poskytovatele modelu). Neposílej token nikomu dalšímu.</p>
+  </section>
+  <section id="swagger" aria-label="Swagger API"></section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+  const statusBox = document.getElementById('status');
+  const tokenInput = document.getElementById('token');
+  const ui = SwaggerUIBundle({
+    url: '/openapi.json',
+    dom_id: '#swagger',
+    deepLinking: true,
+    persistAuthorization: false,
+    displayRequestDuration: true,
+    presets: [SwaggerUIBundle.presets.apis],
+    layout: 'BaseLayout'
+  });
+  document.getElementById('apply').addEventListener('click', async () => {
+    const token = tokenInput.value.trim();
+    if (!token) { statusBox.textContent = 'Vlož PHI_API_TOKEN.'; return; }
+    statusBox.textContent = 'Ověřuji token…';
+    try {
+      const response = await fetch('/profile?user_id=auth-check', {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (response.status === 401) { statusBox.textContent = 'Token je neplatný. Zkontroluj PHI_API_TOKEN v Renderu.'; return; }
+      if (response.status === 503) { statusBox.textContent = 'Server nemá nastavený PHI_API_TOKEN. Zkontroluj Render Environment.'; return; }
+      if (!response.ok) { statusBox.textContent = 'Ověření selhalo (HTTP ' + response.status + ').'; return; }
+      ui.preauthorizeApiKey('HTTPBearer', token);
+      statusBox.textContent = 'Token ověřen. Swagger je autorizován; rozbal endpoint a použij Try it out.';
+    } catch (_) {
+      statusBox.textContent = 'Nepodařilo se spojit se serverem. Zkus stránku obnovit.';
+    }
+  });
+  document.getElementById('clear').addEventListener('click', () => {
+    tokenInput.value = '';
+    ui.authActions.logout(['HTTPBearer']);
+    statusBox.textContent = 'Token vymazán z formuláře a Swagger autorizace zrušena.';
+  });
+</script>
+</body></html>"""
+
 
 @app.post("/ask", dependencies=[Depends(authorize)])
 async def ask(payload: AskRequest) -> dict[str, Any]:
